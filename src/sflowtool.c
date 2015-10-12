@@ -5,9 +5,10 @@
 extern "C" {
 #endif
 
-#ifdef WIN32
+#ifdef _WIN32
 #include "config_windows.h"
 #else
+#define _POSIX_C_SOURCE 1
 #include "config.h"
 #endif
 
@@ -22,7 +23,7 @@ extern "C" {
 #include <setjmp.h>
 #include <ctype.h>
 
-#ifdef WIN32
+#ifdef _WIN32
 #else
 #include <stdint.h>
 #include <unistd.h>
@@ -67,7 +68,7 @@ static uint16_t MyByteSwap16(uint16_t n) {
 }
 
 #ifndef PRIu64
-# ifdef WIN32
+# ifdef _WIN32
 #  define PRIu64 "I64u"
 # else
 #  define PRIu64 "llu"
@@ -76,6 +77,12 @@ static uint16_t MyByteSwap16(uint16_t n) {
 
 #define YES 1
 #define NO 0
+
+/* alias some Windows-stuff to reduce the number of #ifdefs needed later */
+#ifndef _WIN32
+typedef int32_t SOCKET;
+#define INVALID_SOCKET ((SOCKET)-1)
+#endif
 
 /* define my own IP header struct - to ease portability */
 struct myiphdr
@@ -172,13 +179,13 @@ struct pcap_pkthdr {
 typedef struct _SFForwardingTarget {
   struct _SFForwardingTarget *nxt;
   struct sockaddr_in addr;
-  int sock;
+  SOCKET sock;
 } SFForwardingTarget;
 
 typedef struct _SFForwardingTarget6 {
   struct _SFForwardingTarget6 *nxt;
   struct sockaddr_in6 addr;
-  int sock;
+  SOCKET sock;
 } SFForwardingTarget6;
 
 typedef enum { SFLFMT_FULL=0, SFLFMT_PCAP, SFLFMT_LINE, SFLFMT_NETFLOW, SFLFMT_FWD, SFLFMT_CLF, SFLFMT_SCRIPT } EnumSFLFormat;
@@ -192,7 +199,7 @@ typedef struct _SFConfig {
   /* netflow(TM) options */
   uint16_t netFlowOutputPort;
   struct in_addr netFlowOutputIP;
-  int netFlowOutputSocket;
+  SOCKET netFlowOutputSocket;
   uint16_t netFlowPeerAS;
   int disableNetFlowScale;
   uint16_t netFlowVersion;
@@ -1487,7 +1494,7 @@ static void openNetFlowSocket_spoof()
 {
   int on;
 
-  if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == -1) {
+  if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == INVALID_SOCKET) {
     fprintf(ERROUT, "netflow output raw socket open failed\n");
     my_exit(-11);
   }
@@ -1635,7 +1642,7 @@ static void openNetFlowSocket()
   addr.sin_port = ntohs(sfConfig.netFlowOutputPort);
   addr.sin_addr.s_addr = sfConfig.netFlowOutputIP.s_addr;
   /* open an ordinary UDP socket */
-  if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+  if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
     fprintf(ERROUT, "netflow output socket open failed\n");
     my_exit(-4);
   }
@@ -4594,20 +4601,20 @@ static int openInputUDPSocket(uint16_t port)
   /* myaddr_in6.sin6_addr.s_addr = INADDR_ANY; */
   myaddr_in.sin_port = htons(port);
   
-  if ((soc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+  if ((soc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
     fprintf(ERROUT, "v4 socket() creation failed, %s\n", strerror(errno));
     return -1;
   }
 
-#ifndef WIN32
+#ifndef _WIN32
   /* make socket non-blocking */
-  int save_fd = fcntl(soc, F_GETFL);
+  int save_fd = fcntl(soc, F_GETFL); /* TODO: ioctlsocket, not fcntl */
   save_fd |= O_NONBLOCK;
-  fcntl(soc, F_SETFL, save_fd);
-#endif /* WIN32 */
+  fcntl(soc, F_SETFL, save_fd); /* TODO: here too */
+#endif /* _WIN32 */
 
   /* Bind the socket */
-  if(bind(soc, (struct sockaddr *)&myaddr_in, sizeof(struct sockaddr_in)) == -1) {
+  if(bind(soc, (struct sockaddr *)&myaddr_in, sizeof(struct sockaddr_in)) == INVALID_SOCKET) {
     fprintf(ERROUT, "v4 bind() failed, port = %d : %s\n", port, strerror(errno));
     return -1;
   }
@@ -4630,20 +4637,20 @@ static int openInputUDP6Socket(uint16_t port)
   /* myaddr_in6.sin6_addr = INADDR_ANY; */
   myaddr_in6.sin6_port = htons(port);
   
-  if ((soc = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+  if ((soc = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
     fprintf(ERROUT, "v6 socket() creation failed, %s\n", strerror(errno));
     my_exit(-6);
   }
 
-#ifndef WIN32
+#ifndef _WIN32
   /* make socket non-blocking */
-  int save_fd = fcntl(soc, F_GETFL);
+  int save_fd = fcntl(soc, F_GETFL); /* TODO: ioctlsocket, not fcntl */
   save_fd |= O_NONBLOCK;
-  fcntl(soc, F_SETFL, save_fd);
-#endif /* WIN32 */
+  fcntl(soc, F_SETFL, save_fd); /* TODO: here too */
+#endif /* _WIN32 */
 
   /* Bind the socket */
-  if(bind(soc, (struct sockaddr *)&myaddr_in6, sizeof(struct sockaddr_in6)) == -1) {
+  if(bind(soc, (struct sockaddr *)&myaddr_in6, sizeof(struct sockaddr_in6)) == INVALID_SOCKET) {
     fprintf(ERROUT, "v6 bind() failed, port = %d : %s\n", port, strerror(errno));
     return -1;
   }
@@ -5055,7 +5062,7 @@ static int addForwardingTarget(char *hostandport)
     tgt->addr = *(struct sockaddr_in *)&sa;
     tgt->addr.sin_port = htons(port);
     /* and open the socket */
-    if((tgt->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+    if((tgt->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
       fprintf(ERROUT, "v4 socket open (for %s) failed: %s\n", hostandport, strerror(errno));
       my_free(tgt);
       return NO;
@@ -5070,7 +5077,7 @@ static int addForwardingTarget(char *hostandport)
     tgt6->addr = sa;
     tgt6->addr.sin6_port = htons(port);
     /* and open the socket */
-    if((tgt6->sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+    if((tgt6->sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
       fprintf(ERROUT, "v6 socket open (for %s) failed: %s\n", hostandport, strerror(errno));
       my_free(tgt6);
       return NO;
@@ -5086,6 +5093,48 @@ static int addForwardingTarget(char *hostandport)
   }
 
   return YES;
+}
+
+/*_________________---------------------------__________________
+  _________________      my_close_socket      __________________
+  -----------------___________________________------------------
+*/
+
+static void my_close_socket(SOCKET my_socket)
+{
+  int retval;
+  timeval timeout;
+
+  /* attempt clean socket shutdown here but don't be too concerned
+     if not (e.g. don't "flush" read-socket, it won't end) */
+#ifdef _WIN32
+  if((retval = shutdown(my_socket, SD_BOTH)) == WSAEINPROGRESS) {
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    (void)select(1, NULL, NULL, NULL, &timeout);
+    shutdown(my_socket, SD_BOTH);
+  }
+  closesocket(my_socket);
+#else
+  shutdown(my_socket, SHUT_RDWR);
+  close(my_socket);
+#endif
+}
+
+/*_________________---------------------------__________________
+  _________________  closeForwardingTargets   __________________
+  -----------------___________________________------------------
+*/
+static void closeForwardingTargets(SFForwardingTarget *tgt, SFForwardingTarget6 *tgt6)
+{
+  while(tgt) {
+    my_close_socket(tgt->sock);
+    tgt = tgt->nxt;
+  }
+  while(tgt6) {
+    my_close_socket(tgt6->sock);
+    tgt6 = tgt6->nxt;
+  }
 }
 
 /*_________________---------------------------__________________
@@ -5115,8 +5164,16 @@ static void freeForwardingTargets(SFForwardingTarget *tgt, SFForwardingTarget6 *
   -----------------___________________________------------------
 */
 
-static void my_exit(int status)
+static void my_exit(int status, SOCKET soc4, SOCKET soc6)
 {
+  /* close sockets */
+  if(soc4) my_close_socket(soc4);
+  if(soc6) my_close_socket(soc6);
+  if(sfConfig.netFlowOutputSocket) my_close_socket(sfConfig.netFlowOutputSocket);
+  closeForwardingTargets(sfConfig.forwardingTargets, sfConfig.forwardingTargets6);
+#ifdef _WIN32
+  WSACleanup();
+#endif
   /* Free any dynamically allocated global resources then exit */
   freeForwardingTargets(sfConfig.forwardingTargets, sfConfig.forwardingTargets6);
   if(sfConfig.readPcapFileName) my_free(sfConfig.readPcapFileName);
@@ -5196,7 +5253,7 @@ static void process_command_line(int argc, char *argv[])
   /* set defaults */
   sfConfig.sFlowInputPort = 6343;
   sfConfig.netFlowVersion = 5;
-#ifdef WIN32
+#ifdef _WIN32
   sfConfig.listen4 = YES;
   sfConfig.listen6 = NO;
 #else
@@ -5329,7 +5386,7 @@ static void process_command_line(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
-  int32_t soc4=-1,soc6=-1;
+  SOCKET soc4 = INVALID_SOCKET, soc6 = INVALID_SOCKET;
 
   /* set these defaults as early as possible to eliminate any opportunity
      for someone doing "if not NULL then free()", while
@@ -5338,16 +5395,15 @@ int main(int argc, char *argv[])
   sfConfig.forwardingTargets6 = NULL;
   sfConfig.readPcapFileName = NULL;
 
-#ifdef WIN32
+#ifdef _WIN32
   WSADATA wsadata;
   WSAStartup(0xffff, &wsadata);
-  /* TODO: supposed to call WSACleanup() on termination */
 #endif
 
   /* read the command line */
   process_command_line(argc, argv);
 
-#ifdef WIN32
+#ifdef _WIN32
   /* on windows we need to tell stdout if we want it to be binary */
   if(sfConfig.outputFormat == SFLFMT_PCAP) setmode(1, O_BINARY);
 #endif
@@ -5371,10 +5427,10 @@ int main(int argc, char *argv[])
     if(sfConfig.listen6) {
       soc6 = openInputUDP6Socket(sfConfig.sFlowInputPort);
     }
-    if(sfConfig.listen4 || (soc6 == -1 && !sfConfig.listenControlled)) {
+    if(sfConfig.listen4 || (soc6 == INVALID_SOCKET && !sfConfig.listenControlled)) {
       soc4 = openInputUDPSocket(sfConfig.sFlowInputPort);
     }
-    if(soc4 == -1 && soc6 == -1) {
+    if(soc4 == INVALID_SOCKET && soc6 == INVALID_SOCKET) {
       fprintf(ERROUT, "unable to open UDP read socket\n");
       my_exit(-7);
     }

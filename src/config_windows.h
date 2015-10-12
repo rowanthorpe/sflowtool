@@ -5,13 +5,14 @@
 extern "C" {
 #endif
 
-#define VERSION "3.26"
+#define VERSION "3.37"
 #define _CRT_SECURE_NO_WARNINGS 1
 
-#pragma  comment(lib, "wsock32.lib")
-#pragma  comment (lib, "Ws2_32.lib")
-
-#include "winsock2.h"
+#ifdef _MSC_VER
+#pragma comment(lib, "wsock32")
+#pragma comment(lib, "ws2_32")
+#endif
+#include "winsock2.h" /* this autoincludes windows.h */
 #include "WS2tcpip.h"
 #include "io.h"
 
