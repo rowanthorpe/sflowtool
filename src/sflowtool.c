@@ -626,7 +626,7 @@ void *my_calloc(size_t bytes) {
   void *mem = calloc(1, bytes);
   if(mem == NULL) {
     fprintf(ERROUT, "calloc(%"PRIu64") failed: %s\n", (uint64_t)bytes, strerror(errno));
-    exit(-1);
+    my_exit(-1);
   }
   return mem;
 }
@@ -666,7 +666,7 @@ void sf_log(SFSample *sample, char *fmt, ...)
     va_list args;
     va_start(args, fmt);
     if(vprintf(fmt, args) < 0) {
-      exit(-40);
+      my_exit(-40);
     }
   }
 }
@@ -815,7 +815,7 @@ static void writeFlowLine(SFSample *sample)
 	    printAddress(&sample->agent_addr, agentIP),
 	    sample->inputPort,
 	    sample->outputPort) < 0) {
-    exit(-41);
+    my_exit(-41);
   }
   /* layer 2 */
   if(printf("%02x%02x%02x%02x%02x%02x,%02x%02x%02x%02x%02x%02x,0x%04x,%d,%d",
@@ -834,7 +834,7 @@ static void writeFlowLine(SFSample *sample)
 	    sample->eth_type,
 	    sample->in_vlan,
 	    sample->out_vlan) < 0) {
-    exit(-42);
+    my_exit(-42);
   }
   /* layer 3/4 */
   if(printf(",%s,%s,%d,0x%02x,%d,%d,%d,0x%02x",
@@ -846,14 +846,14 @@ static void writeFlowLine(SFSample *sample)
 	    sample->dcd_sport,
 	    sample->dcd_dport,
 	    sample->dcd_tcpFlags) < 0) {
-    exit(-43);
+    my_exit(-43);
   }
   /* bytes */
   if(printf(",%d,%d,%d\n",
 	    sample->sampledPacketSize,
 	    sample->sampledPacketSize - sample->stripped - sample->offsetToIPV4,
 	    sample->meanSkipCount) < 0) {
-    exit(-44);
+    my_exit(-44);
   }
 }
 
@@ -867,7 +867,7 @@ static void writeCountersLine(SFSample *sample)
   /* source */
   char agentIP[51];
   if(printf("CNTR,%s,", printAddress(&sample->agent_addr, agentIP)) < 0) {
-    exit(-45);
+    my_exit(-45);
   }
   if(printf("%u,%u,%"PRIu64",%u,%u,%"PRIu64",%u,%u,%u,%u,%u,%u,%"PRIu64",%u,%u,%u,%u,%u,%u\n",
 	    sample->ifCounters.ifIndex,
@@ -889,7 +889,7 @@ static void writeCountersLine(SFSample *sample)
 	    sample->ifCounters.ifOutDiscards,
 	    sample->ifCounters.ifOutErrors,
 	    sample->ifCounters.ifPromiscuousMode) < 0) {
-    exit(-46);
+    my_exit(-46);
   }
 }
 
@@ -1365,7 +1365,7 @@ static void readPcapHeader() {
   struct pcap_file_header hdr;
   if(fread(&hdr, sizeof(hdr), 1, sfConfig.readPcapFile) != 1) {
     fprintf(ERROUT, "unable to read pcap header from %s : %s\n", sfConfig.readPcapFileName, strerror(errno));
-    exit(-30);
+    my_exit(-30);
   }
   if(hdr.magic != TCPDUMP_MAGIC) {
     if(hdr.magic == MyByteSwap32(TCPDUMP_MAGIC)) {
@@ -1382,7 +1382,7 @@ static void readPcapHeader() {
 	      sfConfig.readPcapFileName,
 	      hdr.magic,
 	      TCPDUMP_MAGIC);
-      exit(-31);
+      my_exit(-31);
     }
   }
   fprintf(ERROUT, "pcap version=%d.%d snaplen=%d linktype=%d \n",
@@ -1415,7 +1415,7 @@ static void writePcapHeader() {
   hdr.linktype = DLT_EN10MB;
   if (fwrite((char *)&hdr, sizeof(hdr), 1, stdout) != 1) {
     fprintf(ERROUT, "failed to write tcpdump header: %s\n", strerror(errno));
-    exit(-1);
+    my_exit(-1);
   }
   fflush(stdout);
 }
@@ -1447,7 +1447,7 @@ static void writePcapPacket(SFSample *sample) {
 
   if(fwrite(buf, bytes, 1, stdout) != 1) {
     fprintf(ERROUT, "writePcapPacket: packet write failed: %s\n", strerror(errno));
-    exit(-3);
+    my_exit(-3);
   }
   fflush(stdout);
 }
@@ -1489,17 +1489,17 @@ static void openNetFlowSocket_spoof()
 
   if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == -1) {
     fprintf(ERROUT, "netflow output raw socket open failed\n");
-    exit(-11);
+    my_exit(-11);
   }
   on = 1;
   if(setsockopt(sfConfig.netFlowOutputSocket, IPPROTO_IP, IP_HDRINCL, (char *)&on, sizeof(on)) < 0) {
     fprintf(ERROUT, "setsockopt( IP_HDRINCL ) failed\n");
-    exit(-13);
+    my_exit(-13);
   }
   on = 1;
   if(setsockopt(sfConfig.netFlowOutputSocket, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0) {
     fprintf(ERROUT, "setsockopt( SO_REUSEADDR ) failed\n");
-    exit(-14);
+    my_exit(-14);
   }
 
   memset(&sfConfig.sendPkt, 0, sizeof(sfConfig.sendPkt));
@@ -1637,12 +1637,12 @@ static void openNetFlowSocket()
   /* open an ordinary UDP socket */
   if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
     fprintf(ERROUT, "netflow output socket open failed\n");
-    exit(-4);
+    my_exit(-4);
   }
   /* connect to it so we can just use send() or write() to send on it */
   if(connect(sfConfig.netFlowOutputSocket, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
     fprintf(ERROUT, "connect() to netflow output socket failed\n");
-    exit(-5);
+    my_exit(-5);
   }
 }
 
@@ -2495,7 +2495,7 @@ static void readFlowSample_header(SFSample *sample)
     break;
   default:
     fprintf(ERROUT, "undefined headerProtocol = %d\n", sample->headerProtocol);
-    exit(-12);
+    my_exit(-12);
   }
   
   if(sample->gotIPV4) {
@@ -3223,7 +3223,7 @@ static void readFlowSample(SFSample *sample, int expanded)
     case SFLFMT_CLF:
       if(sfCLF.valid) {
 	if(printf("%s %s\n", sfCLF.client, sfCLF.http_log) < 0) {
-	  exit(-48);
+	  my_exit(-48);
 	}
       }
       break;
@@ -4632,7 +4632,7 @@ static int openInputUDP6Socket(uint16_t port)
   
   if ((soc = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
     fprintf(ERROUT, "v6 socket() creation failed, %s\n", strerror(errno));
-    exit(-6);
+    my_exit(-6);
   }
 
 #ifndef WIN32
@@ -4851,7 +4851,13 @@ static int readPcapPacket(FILE *file)
   if(fread(&hdr, sizeof(hdr), 1, file) != 1) {
     if(feof(file)) return 0;
     fprintf(ERROUT, "unable to read pcap packet header from %s : %s\n", sfConfig.readPcapFileName, strerror(errno));
-    exit(-32);
+    my_exit(-32);
+  }
+  if(sfConfig.tcpdumpHdrPad > 0) {
+    if(fread(buf, sfConfig.tcpdumpHdrPad, 1, file) != 1) {
+      fprintf(ERROUT, "unable to read pcap header pad (%d bytes)\n", sfConfig.tcpdumpHdrPad);
+      my_exit(-33);
+    }
   }
 
   if(sfConfig.pcapSwap) {
@@ -4863,7 +4869,7 @@ static int readPcapPacket(FILE *file)
   
   if(fread(buf, hdr.caplen, 1, file) != 1) {
     fprintf(ERROUT, "unable to read pcap packet from %s : %s\n", sfConfig.readPcapFileName, strerror(errno));
-    exit(-34);
+    my_exit(-34);
   }
 
 
@@ -4893,14 +4899,14 @@ static int readPcapPacket(FILE *file)
 static void peekForNumber(char *p) {
   if(*p < '0' || *p > '9') {
     fprintf(ERROUT, "error parsing vlan filter ranges (next char = <%c>)\n", *p);
-    exit(-19);
+    my_exit(-19);
   }
 }
 
 static void testVlan(uint32_t num) {
   if(num > FILTER_MAX_VLAN) {
     fprintf(ERROUT, "error parsing vlan filter (vlan = <%d> out of range)\n", num);
-    exit(-20);
+    my_exit(-20);
   }
 }
 
@@ -4939,21 +4945,31 @@ static void parseVlanFilter(uint8_t *array, uint8_t flag, char *start)
 static int parseOrResolveAddress(char *name, struct sockaddr *sa, SFLAddress *addr, int family, int numeric)
 {
   struct addrinfo *info = NULL;
-  struct addrinfo hints = { 0 };
+  struct addrinfo hints;
+  memset(&hints, 0, sizeof(hints));
+  struct timeval timeout;
+
   hints.ai_socktype = SOCK_DGRAM; // constrain this so we don't get lots of answers
   hints.ai_family = family; // PF_INET, PF_INET6 or 0
   if(numeric) {
     hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
   }
   int err = getaddrinfo(name, NULL, &hints, &info);
-  if(err) {
-    fprintf(ERROUT, "getaddrinfo() failed: %s", gai_strerror(err));
-    /* try again if err == EAI_AGAIN? */
+  switch(err) {
+  case 0:
+    /* success, which implies info->ai_addr != NULL */
+    break;
+  case EAI_AGAIN:
+    fprintf(ERROUT, "getaddrinfo() temporary failure, trying again: %s\n", gai_strerror(err));
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    (void)select(1, NULL, NULL, NULL, &timeout);
+    /* TODO: set a global counter to prevent this bombing to infinity */
+    if(parseOrResolveAddress(name, sa, addr, family, numeric) != YES) return NO;
+  default:
+    fprintf(ERROUT, "getaddrinfo() failed: %s\n", gai_strerror(err));
     return NO;
   }
-  
-  if(info == NULL) return NO;
-  
   if(info->ai_addr) {
     // answer is now in info - a linked list of answers with sockaddr values.
     // extract the address we want from the first one. $$$ should perhaps
@@ -4978,8 +4994,8 @@ static int parseOrResolveAddress(char *name, struct sockaddr *sa, SFLAddress *ad
       break;
     default:
       fprintf(ERROUT, "get addrinfo: unexpected address family: %d", info->ai_family);
+      freeaddrinfo(info);
       return NO;
-      break;
     }
   }
   // free the dynamically allocated data before returning
@@ -5040,7 +5056,8 @@ static int addForwardingTarget(char *hostandport)
     tgt->addr.sin_port = htons(port);
     /* and open the socket */
     if((tgt->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
-      fprintf(ERROUT, "socket open (for %s) failed: %s", hostandport, strerror(errno));
+      fprintf(ERROUT, "v4 socket open (for %s) failed: %s\n", hostandport, strerror(errno));
+      my_free(tgt);
       return NO;
     }
     /* got this far, so must be OK */
@@ -5054,7 +5071,8 @@ static int addForwardingTarget(char *hostandport)
     tgt6->addr.sin6_port = htons(port);
     /* and open the socket */
     if((tgt6->sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
-      fprintf(ERROUT, "socket open (for %s) failed: %s", hostandport, strerror(errno));
+      fprintf(ERROUT, "v6 socket open (for %s) failed: %s\n", hostandport, strerror(errno));
+      my_free(tgt6);
       return NO;
     }
     /* got this far, so must be OK */
@@ -5063,12 +5081,47 @@ static int addForwardingTarget(char *hostandport)
     break;
 
   default:
-    fprintf(ERROUT, "unknown address type %s", hoststr);
+    fprintf(ERROUT, "unknown address type %s\n", hoststr);
     return NO;
   }
 
   return YES;
-}  
+}
+
+/*_________________---------------------------__________________
+  _________________  freeForwardingTargets    __________________
+  -----------------___________________________------------------
+*/
+
+static void freeForwardingTargets(SFForwardingTarget *tgt, SFForwardingTarget6 *tgt6)
+{
+  SFForwardingTarget *nexttgt;
+  SFForwardingTarget6 *nexttgt6;
+
+  while(tgt) {
+    nexttgt = tgt->nxt;
+    my_free(tgt);
+    tgt = nexttgt;
+  }
+  while(tgt6) {
+    nexttgt6 = tgt6->nxt;
+    my_free(tgt6);
+    tgt6 = nexttgt6;
+  }
+}
+
+/*_________________---------------------------__________________
+  _________________        my_exit             __________________
+  -----------------___________________________------------------
+*/
+
+static void my_exit(int status)
+{
+  /* Free any dynamically allocated global resources then exit */
+  freeForwardingTargets(sfConfig.forwardingTargets, sfConfig.forwardingTargets6);
+  if(sfConfig.readPcapFileName) my_free(sfConfig.readPcapFileName);
+  exit(status);
+}
 
 /*_________________---------------------------__________________
   _________________      instructions         __________________
@@ -5156,7 +5209,7 @@ static void process_command_line(int argc, char *argv[])
   while (arg < argc) {
     plus = (argv[arg][0] == '+');
     minus = (argv[arg][0] == '-');
-    if(plus == NO && minus == NO) { instructions(*argv); exit(1); }
+    if(plus == NO && minus == NO) { instructions(*argv); my_exit(1); }
     in = argv[arg++][1];
     /* check first that options with/without arguments are correct */
     switch(in) {
@@ -5183,7 +5236,7 @@ static void process_command_line(int argc, char *argv[])
     case 'f':
     case 'N':
     case 'v': if(arg < argc) break;
-    default: instructions(*argv); exit(1);
+    default: instructions(*argv); my_exit(1);
     }
 
     switch(in) {
@@ -5203,7 +5256,7 @@ static void process_command_line(int argc, char *argv[])
 	struct hostent *ent = gethostbyname(argv[arg++]);
 	if(ent == NULL) {
 	  fprintf(ERROUT, "netflow collector hostname lookup failed\n");
-	  exit(-8);
+	  my_exit(-8);
         }
     	sfConfig.netFlowOutputIP.s_addr = ((struct in_addr *)(ent->h_addr_list[0]))->s_addr;
 	sfConfig.outputFormat = SFLFMT_NETFLOW;
@@ -5233,7 +5286,7 @@ static void process_command_line(int argc, char *argv[])
       }
       break;
     case 'f':
-      if(addForwardingTarget(argv[arg++]) == NO) exit(-35);
+      if(addForwardingTarget(argv[arg++]) == NO) my_exit(-35);
       sfConfig.outputFormat = SFLFMT_FWD;
       break;
     case 'v':
@@ -5264,7 +5317,7 @@ static void process_command_line(int argc, char *argv[])
       break;
     case 'k': sfConfig.keepGoing = YES; break;
     /* remaining are -h or -? */
-    default: instructions(*argv); exit(0);
+    default: instructions(*argv); my_exit(0);
     }
   }
 }
@@ -5277,6 +5330,13 @@ static void process_command_line(int argc, char *argv[])
 int main(int argc, char *argv[])
 {
   int32_t soc4=-1,soc6=-1;
+
+  /* set these defaults as early as possible to eliminate any opportunity
+     for someone doing "if not NULL then free()", while
+     "not-yet-defined may != NULL" */
+  sfConfig.forwardingTargets = NULL;
+  sfConfig.forwardingTargets6 = NULL;
+  sfConfig.readPcapFileName = NULL;
 
 #ifdef WIN32
   WSADATA wsadata;
@@ -5298,7 +5358,7 @@ int main(int argc, char *argv[])
     else sfConfig.readPcapFile = fopen(sfConfig.readPcapFileName, "rb");
     if(sfConfig.readPcapFile == NULL) {
       fprintf(ERROUT, "cannot open %s : %s\n", sfConfig.readPcapFileName, strerror(errno));
-      exit(-1);
+      my_exit(-1);
     }
     readPcapHeader();
   }
@@ -5316,7 +5376,7 @@ int main(int argc, char *argv[])
     }
     if(soc4 == -1 && soc6 == -1) {
       fprintf(ERROUT, "unable to open UDP read socket\n");
-      exit(-7);
+      my_exit(-7);
     }
   }
     
@@ -5363,7 +5423,7 @@ int main(int argc, char *argv[])
 	  (void)select(1, NULL, NULL, NULL, &timeout);
 	}
 	else {
-          exit(-9);
+          my_exit(-9);
 	}
       }
       if(nfds > 0) {
@@ -5372,7 +5432,7 @@ int main(int argc, char *argv[])
       }
     }
   }
-  return 0;
+  my_exit(0);
 }
 
 
