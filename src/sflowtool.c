@@ -198,7 +198,7 @@ typedef struct _SFConfig {
   uint16_t sFlowInputPort;
   /* netflow(TM) options */
   uint16_t netFlowOutputPort;
-  struct in_addr netFlowOutputIP;
+  SFLAddress netFlowOutputIP;
   SOCKET netFlowOutputSocket;
   uint16_t netFlowPeerAS;
   int disableNetFlowScale;
@@ -1494,29 +1494,62 @@ static void openNetFlowSocket_spoof()
 {
   int on;
 
-  if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == INVALID_SOCKET) {
-    fprintf(ERROUT, "netflow output raw socket open failed\n");
-    my_exit(-11);
-  }
   on = 1;
-  if(setsockopt(sfConfig.netFlowOutputSocket, IPPROTO_IP, IP_HDRINCL, (char *)&on, sizeof(on)) < 0) {
-    fprintf(ERROUT, "setsockopt( IP_HDRINCL ) failed\n");
-    my_exit(-13);
+  sfConfig.netFlowOutputSocket = INVALID_SOCKET;
+
+  /* if SFLADDRESSTYPE_UNDEFINED try v6 & fallback to v4 */
+  if(sfConfig.netFlowOutputIP.type != SFLADDRESSTYPE_IP_V4) {
+    if((sfConfig.netFlowOutputSocket = socket(AF_INET6, SOCK_RAW, IPPROTO_UDP)) == -1) {
+      if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_IP_V6) {
+        fprintf(ERROUT, "netflow output IPv6 raw socket open failed\n");
+        exit(-11);
+      }
+    } else {
+      if(setsockopt(sfConfig.netFlowOutputSocket, IPPROTO_IPV6, IPV6_HDRINCL, (char *)&on, sizeof(on)) < 0) {
+        fprintf(ERROUT, "setsockopt( IPV6_HDRINCL ) failed\n");
+        exit(-13);
+      }
+      if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_UNDEFINED) {
+        sfConfig.netFlowOutputIP.type = SFLADDRESSTYPE_IP_V6;
+      }
+    }
   }
-  on = 1;
+  /* v4 was specified, or trying v6 for UNDEFINED failed */
+  if(sfConfig.netFlowOutputSocket == -1) {
+    if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) == -1) {
+      fprintf(ERROUT, "netflow output IPv4 raw socket open failed\n");
+      exit(-11);
+    }
+    if(setsockopt(sfConfig.netFlowOutputSocket, IPPROTO_IP, IP_HDRINCL, (char *)&on, sizeof(on)) < 0) {
+      fprintf(ERROUT, "setsockopt( IP_HDRINCL ) failed\n");
+      exit(-13);
+    }
+    if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_UNDEFINED) {
+      sfConfig.netFlowOutputIP.type = SFLADDRESSTYPE_IP_V4;
+    }
+  }
+
   if(setsockopt(sfConfig.netFlowOutputSocket, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on)) < 0) {
     fprintf(ERROUT, "setsockopt( SO_REUSEADDR ) failed\n");
     my_exit(-14);
   }
 
   memset(&sfConfig.sendPkt, 0, sizeof(sfConfig.sendPkt));
-  sfConfig.sendPkt.ip.version_and_headerLen = 0x45;
+  if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_IP_V6) {
+    sfConfig.sendPkt.ip.version_and_headerLen = 0x??; /* TODO */
+  } else {
+    sfConfig.sendPkt.ip.version_and_headerLen = 0x45;
+  }
   sfConfig.sendPkt.ip.protocol = IPPROTO_UDP;
   sfConfig.sendPkt.ip.ttl = 64; /* IPDEFTTL */
   sfConfig.ipid = 12000; /* start counting from 12000 (just an arbitrary number) */
   /* sfConfig.ip->frag_off = htons(0x4000); */ /* don't fragment */
   /* can't set the source address yet, but the dest address is known */
-  sfConfig.sendPkt.ip.daddr = sfConfig.netFlowOutputIP.s_addr;
+  if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_IP_V6) {
+    sfConfig.sendPkt.ip.daddr = sfConfig.netFlowOutputIP.address.ip_v6.addr; /* TODO sendPkt.ip.v6.daddr...? */
+  } else {
+    sfConfig.sendPkt.ip.daddr = sfConfig.netFlowOutputIP.address.ip_v4.addr; /* TODO sendPkt.ip.v4.daddr...? */
+  }
   /* can't do the ip_len and checksum until we know the size of the packet */
   sfConfig.sendPkt.udp.uh_dport = htons(sfConfig.netFlowOutputPort);
   /* might as well set the source port to be the same */
@@ -1629,7 +1662,8 @@ static void sendNetFlowDatagram_spoof(SFSample *sample, NFFlowPkt *pkt)
 static void openNetFlowSocket()
 {
   struct sockaddr_in addr;
-  
+  struct sockaddr_in6 addr6;
+
 #ifdef SPOOFSOURCE
   if(sfConfig.spoofSource) {
     openNetFlowSocket_spoof();
@@ -1637,19 +1671,50 @@ static void openNetFlowSocket()
   }
 #endif
 
-  memset((char *)&addr,0,sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = ntohs(sfConfig.netFlowOutputPort);
-  addr.sin_addr.s_addr = sfConfig.netFlowOutputIP.s_addr;
   /* open an ordinary UDP socket */
-  if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
-    fprintf(ERROUT, "netflow output socket open failed\n");
-    my_exit(-4);
+  if(sfConfig.netFlowOutputIP.type != SFLADDRESSTYPE_IP_V4) {
+    if((sfConfig.netFlowOutputSocket = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) == INVALID_SOCKET) {
+      if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_IP_V6) {
+        fprintf(ERROUT, "netflow output IPv6 socket open failed\n");
+        exit(-4);
+      }
+    } else {
+      if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_UNDEFINED) {
+        sfConfig.netFlowOutputIP.type = SFLADDRESSTYPE_IP_V6;
+      }
+    }
   }
-  /* connect to it so we can just use send() or write() to send on it */
-  if(connect(sfConfig.netFlowOutputSocket, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
-    fprintf(ERROUT, "connect() to netflow output socket failed\n");
-    my_exit(-5);
+  if(sfConfig.netFlowOutputSocket == -1) {
+    if((sfConfig.netFlowOutputSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+      fprintf(ERROUT, "netflow output IPv4 socket open failed\n");
+      exit(-4);
+    }
+    if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_UNDEFINED) {
+      sfConfig.netFlowOutputIP.type = SFLADDRESSTYPE_IP_V4;
+    }
+  }
+
+  /* TODO - check all of this */
+  if(sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_IP_V6) {
+    memset((char *)&addr6, 0, sizeof(addr6));
+    addr6.sin6_family = AF_INET6;
+    addr6.sin6_port = ntohs(sfConfig.netFlowOutputPort);
+    memcpy(&addr6.sin6_addr.s6_addr, sfConfig.netFlowOutputIP.address.ip_v6.addr, sizeof(addr6.sin6_addr.s6_addr));
+    /* connect to it so we can just use send() or write() to send on it */
+    if(connect(sfConfig.netFlowOutputSocket, (struct sockaddr *)&addr6, sizeof(addr6)) != 0) {
+      fprintf(ERROUT, "connect() to netflow IPv6 output socket failed\n");
+      exit(-5);
+    }
+  } else {
+    memset((char *)&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = ntohs(sfConfig.netFlowOutputPort);
+    addr.sin_addr.s_addr = sfConfig.netFlowOutputIP.address.ip_v4.addr;
+    /* connect to it so we can just use send() or write() to send on it */
+    if(connect(sfConfig.netFlowOutputSocket, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+      fprintf(ERROUT, "connect() to netflow IPv4 output socket failed\n");
+      exit(-5);
+    }
   }
 }
 
@@ -4954,10 +5019,12 @@ static int parseOrResolveAddress(char *name, struct sockaddr *sa, SFLAddress *ad
   struct addrinfo *info = NULL;
   struct addrinfo hints;
   memset(&hints, 0, sizeof(hints));
+  struct addrinfo *ip;
   struct timeval timeout;
 
   hints.ai_socktype = SOCK_DGRAM; // constrain this so we don't get lots of answers
-  hints.ai_family = family; // PF_INET, PF_INET6 or 0
+  hints.ai_family = family; // AF_INET, AF_INET6 or AF_UNSPEC
+  hints.ai_protocol = IPPROTO_UDP;
   if(numeric) {
     hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
   }
@@ -4977,33 +5044,41 @@ static int parseOrResolveAddress(char *name, struct sockaddr *sa, SFLAddress *ad
     fprintf(ERROUT, "getaddrinfo() failed: %s\n", gai_strerror(err));
     return NO;
   }
-  if(info->ai_addr) {
-    // answer is now in info - a linked list of answers with sockaddr values.
-    // extract the address we want from the first one. $$$ should perhaps
-    // traverse the list and look for an IPv4 address since that is more
-    // likely to work?
-    switch(info->ai_family) {
-    case PF_INET:
-      {
-	struct sockaddr_in *ipsoc = (struct sockaddr_in *)info->ai_addr;
-	addr->type = SFLADDRESSTYPE_IP_V4;
-	addr->address.ip_v4.addr = ipsoc->sin_addr.s_addr;
-	if(sa) memcpy(sa, info->ai_addr, info->ai_addrlen);
-      }
+  /* answer is now in info - a linked list of answers with sockaddr values.
+     traverse the list and extract the first IPv4 address since that is more
+     likely to work, fallback to IPv6 address */
+  for (ip = info;; ip = ip->ai_next) {
+    if(ip == NULL) {
+      /* no IPv4 result found, so just use the first result (which should be IPv6, or
+         is NULL - in which case we want to return NULL anyway) */
+      ip = info;
       break;
-    case PF_INET6:
-      {
-	struct sockaddr_in6 *ip6soc = (struct sockaddr_in6 *)info->ai_addr;
-	addr->type = SFLADDRESSTYPE_IP_V6;
-	memcpy(&addr->address.ip_v6, &ip6soc->sin6_addr, 16);
-	if(sa) memcpy(sa, info->ai_addr, info->ai_addrlen);
-      }
+    } else if(ip->ai_family == AF_INET) {
       break;
-    default:
-      fprintf(ERROUT, "get addrinfo: unexpected address family: %d", info->ai_family);
-      freeaddrinfo(info);
-      return NO;
     }
+  }
+  switch(ip->ai_family) {
+  case AF_INET:
+    {
+      ipsoc = (struct sockaddr_in *)ip->ai_addr;
+      addr->type = SFLADDRESSTYPE_IP_V4;
+      addr->address.ip_v4.addr = ipsoc->sin_addr.s_addr;
+      if(sa) memcpy(sa, ip->ai_addr, ip->ai_addrlen);
+    }
+    break;
+  case AF_INET6:
+    {
+      ip6soc = (struct sockaddr_in6 *)ip->ai_addr;
+      addr->type = SFLADDRESSTYPE_IP_V6;
+      memcpy(&addr->address.ip_v6, &ip6soc->sin6_addr, sizeof(addr->address.ip_v6));
+      if(sa) memcpy(sa, ip->ai_addr, ip->ai_addrlen);
+    }
+    break;
+  default:
+    fprintf(ERROUT, "getaddrinfo: unexpected address family: %d\n", ip->ai_family);
+    /* free the dynamically allocated data before returning */
+    freeaddrinfo(info);
+    return NO;
   }
   // free the dynamically allocated data before returning
   freeaddrinfo(info);
@@ -5053,7 +5128,7 @@ static int addForwardingTarget(char *hostandport)
     return NO;
   }
 
-  if(parseOrResolveAddress(hoststr, (struct sockaddr *)&sa, &tgtIP, 0, 1) == NO) {
+  if(parseOrResolveAddress(hoststr, (struct sockaddr *)&sa, &tgtIP, AF_UNSPEC, NO) == NO) {
     return NO;
   }
   switch(tgtIP.type) {
@@ -5310,12 +5385,21 @@ static void process_command_line(int argc, char *argv[])
     case 'x': sfConfig.removeContent = YES; break;
     case 'c':
       {
-	struct hostent *ent = gethostbyname(argv[arg++]);
-	if(ent == NULL) {
-	  fprintf(ERROUT, "netflow collector hostname lookup failed\n");
-	  my_exit(-8);
+        SFLAddress tgtIP;
+        if(parseOrResolveAddress(argv[arg], NULL, &tgtIP, AF_UNSPEC, NO) == NO) {
+          fprintf(ERROUT, "netflow collector hostname \"%s\" lookup failed\n", argv[arg]);
+          exit(-8);
         }
-    	sfConfig.netFlowOutputIP.s_addr = ((struct in_addr *)(ent->h_addr_list[0]))->s_addr;
+        switch(tgtIP.type) {
+        case SFLADDRESSTYPE_IP_V4:
+          sfConfig.netFlowOutputIP.address.ip_v4.addr = tgtIP.address.ip_v4.addr;
+        case SFLADDRESSTYPE_IP_V6:
+          memcpy(&sfConfig.netFlowOutputIP.address.ip_v6.addr, &tgtIP.address.ip_v6.addr, sizeof(sfConfig.netFlowOutputIP.address.ip_v6.addr));
+        default:
+          fprintf(ERROUT, "netflow collector address type \"%s\" unknown\n", argv[arg]);
+          exit(-8);
+        }
+        arg++;
 	sfConfig.outputFormat = SFLFMT_NETFLOW;
       }
       break;
@@ -5437,7 +5521,17 @@ int main(int argc, char *argv[])
   }
     
   /* possible open an output socket for netflow */
-  if(sfConfig.netFlowOutputPort != 0 && sfConfig.netFlowOutputIP.s_addr != 0) openNetFlowSocket();
+  /* (opening the socket sets SFLADDRESSTYPE_IP_{V4,V6}, so UNDEFINED already means it needs opening) */
+  if(sfConfig.netFlowOutputPort != 0) {
+    if(
+      sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_IP_UNDEFINED ||
+      (sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_IP_V4 && sfConfig.netFlowOutputIP.address.ip_v4.addr != 0) ||
+      (sfConfig.netFlowOutputIP.type == SFLADDRESSTYPE_IP_V6 && sfConfig.netFlowOutputIP.address.ip_v6.addr != 0)
+    )
+    {
+      openNetFlowSocket();
+    }
+  }
   /* if tcpdump format, write the header */
   if(sfConfig.outputFormat == SFLFMT_PCAP) writePcapHeader();
   if(sfConfig.readPcapFile) {
